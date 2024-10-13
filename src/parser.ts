@@ -1,59 +1,45 @@
-/**
- * The `peek` symbol is used in parser generators to request and inspect the next input item without consuming it.
- */
 const peek: unique symbol = Symbol();
 
-/**
- * The `consume` symbol is used in parser generators to request and consume the next input item.
- */
+export type Peek = typeof peek;
+
 const consume: unique symbol = Symbol();
 
-/**
- * The `endOfInput` symbol represents the state when no more input is available to the parser.
- */
+export type Consume = typeof consume;
+
 export const endOfInput: unique symbol = Symbol();
 
-/**
- * Types of requests that can be made by a parser: peek, consume, take a snapshot, or a snapshot instance itself.
- */
-export type ParserRequest<Input> = typeof peek | typeof consume | typeof ParserSnapshot | ParserSnapshot;
+export type EndOfInput = typeof endOfInput;
 
 /**
- * Types of responses a parser can produce: an input item, end of input, or a snapshot instance.
+ * Types of requests a parser can make.
  */
-export type ParserResponse<Input> = Input | typeof endOfInput | ParserSnapshot;
+export type ParserRequest<Input> = Peek | Consume | typeof ParserSnapshot | ParserSnapshot;
 
 /**
- * A generator-based parser that produces an output from a series of parser requests and responses.
+ * Possible responses for a parser.
+ */
+export type ParserResponse<Input> = Input | EndOfInput | ParserSnapshot;
+
+/**
+ * A generator yielding ParserRequests and producing an Output.
+ *
+ * @template Input
+ * @template Output
  */
 export type ParserGenerator<Input, Output> = Generator<ParserRequest<Input>, Output, ParserResponse<Input>>;
 
 /**
- * Asserts that a condition is true, otherwise throws an error using a constructor and an error creation function.
+ * A snapshot of the parser's current state.
  *
- * @param {any} condition - The condition to be asserted.
- * @param {Function} constructor - The function constructor, usually of the calling function, for stack trace.
- * @param {() => Error} constructError - A function that returns the error to be thrown.
- * @throws {Error} If the condition is false, throws the constructed error.
- */
-// deno-lint-ignore no-explicit-any ban-types
-function assert(condition: any, constructor: Function, constructError: () => Error): asserts condition {
-    if (!condition) {
-        const error = constructError();
-        Error.captureStackTrace(error, constructor);
-        throw error;
-    }
-}
-
-/**
- * A snapshot of the parser's state, including the cursor position.
+ * @class ParserSnapshot
  */
 export class ParserSnapshot {
     /**
-     * Constructs a snapshot of the parser's state.
+     * Creates an instance of ParserSnapshot.
      *
-     * @param {ParserState<unknown, unknown>} state - The current state of the parser.
-     * @param {number} [cursor=state.cursor] - The position of the cursor in the input.
+     * @constructor
+     * @param {ParserState<unknown, unknown>} state - The current parser state.
+     * @param {number} [cursor=state.cursor] - The current cursor position.
      */
     constructor(
         readonly state: ParserState<unknown, unknown>,
@@ -63,13 +49,17 @@ export class ParserSnapshot {
 }
 
 /**
- * Represents an error due to reaching an unexpected end of input in the parser.
+ * Error thrown when the end of input is unexpectedly reached.
+ *
+ * @class EndOfInputError
+ * @extends {SyntaxError}
  */
-export class EndOfInput extends SyntaxError {
+export class EndOfInputError extends SyntaxError {
     /**
-     * Constructs an EndOfInput error.
+     * Creates an instance of EndOfInputError.
      *
-     * @param {string} [message] - Optional message describing the error.
+     * @constructor
+     * @param {string} [message] - Optional custom error message.
      */
     constructor(message?: string) {
         super(message ?? "Unexpected end of input");
@@ -77,39 +67,11 @@ export class EndOfInput extends SyntaxError {
 }
 
 /**
- * Hooks interface for parsing actions, allowing consumption, rollback, and return events.
- */
-export interface ParserProgramHooks<Input, Output> {
-    onConsumption?(input: Input): void;
-    onRollback?(inputs: Input[]): void;
-    onReturn?(output: Output): void;
-}
-
-/**
- * Abstract class representing a parser program that parses input and produces output,
- * implemented by extending this class and providing a generator function.
- */
-export abstract class ParserProgram<Input, Output> {
-    /**
-     * Constructs a parser program with optional hooks.
-     *
-     * @param {ParserProgramHooks<Input, Output>} [hooks] - Optional hooks for parser events.
-     */
-    protected constructor(
-        readonly hooks?: ParserProgramHooks<Input, Output>,
-    ) {
-    }
-
-    /**
-     * Abstract method that subclasses must implement to define parsing logic as a generator.
-     *
-     * @returns {ParserGenerator<Input, Output>} - The generator for parsing input into output.
-     */
-    abstract parse(): ParserGenerator<Input, Output>;
-}
-
-/**
- * Represents the state of parsing, including the generator, result, and cursor position.
+ * Represents the state of the parser.
+ *
+ * @template Input
+ * @template Output
+ * @typedef {{ generator: ParserGenerator<Input, Output>, result: IteratorYieldResult<ParserRequest<Input>>, cursor: number }} ParserState
  */
 export type ParserState<Input, Output> = {
     generator: ParserGenerator<Input, Output>,
@@ -118,38 +80,46 @@ export type ParserState<Input, Output> = {
 };
 
 /**
- * Options for configuring parser behavior, including streaming.
+ * Options for parsing.
  */
 export type ParserParseOptions = {
     stream?: boolean,
 };
 
 /**
- * Class implementing the parsing process using a specified parser program.
+ * Abstract class defining a generic parser.
+ *
+ * @abstract
+ * @class Parser
+ * @template Input
+ * @template Output
  */
-export class Parser<Input, Output> {
-    readonly #program: ParserProgram<Input, Output>;
+export abstract class Parser<Input, Output> {
     readonly #buffer: Input[] = [];
     #state?: ParserState<Input, Output>;
 
-    /**
-     * Constructs a parser with the specified parser program.
-     *
-     * @param {ParserProgram<Input, Output>} program - The parser program to use for parsing.
-     */
-    constructor(program: ParserProgram<Input, Output>) {
-        this.#program = program;
-    }
+    onConsumption?(input: Input): void;
+    onRollback?(inputs: Input[]): void;
+    onReturn?(output: Output): void;
 
     /**
-     * Processes the input and executes the parser generator logic.
+     * Defines the generator function to parse inputs and yield outputs.
      *
-     * @returns {Generator<Output>} - Generator yielding the parsed outputs.
-     * @throws {TypeError} If the parser has not consumed any input.
+     * @abstract
+     * @returns {ParserGenerator<Input, Output>}
+     */
+    abstract parse(): ParserGenerator<Input, Output>;
+
+    /**
+     * Internal method to process parser commands.
+     *
+     * @generator
+     * @returns {Generator<Output>}
+     * @throws {TypeError} If the parser has not consumed any input and is prematurely complete.
      */
     * #process(): Generator<Output> {
         if (!this.#state) {
-            const generator = this.#program.parse();
+            const generator = this.parse();
             const result = generator.next();
 
             if (result.done) {
@@ -166,14 +136,14 @@ export class Parser<Input, Output> {
             result = this.#state.generator.next(new ParserSnapshot(this.#state));
         } else if (request instanceof ParserSnapshot) {
             if (this.#state !== request.state) throw new Error();
-            this.#program.hooks?.onRollback?.(this.#buffer.slice(request.cursor, this.#state.cursor));
+            this.onRollback?.(this.#buffer.slice(request.cursor, this.#state.cursor));
             this.#state.cursor = request.cursor;
             result = this.#state.generator.next(request);
         } else if (this.#state.cursor < this.#buffer.length) {
             const item = this.#buffer[this.#state.cursor];
 
             if (request === consume) {
-                this.#program.hooks?.onConsumption?.(item);
+                this.onConsumption?.(item);
                 this.#state.cursor++;
             }
 
@@ -184,7 +154,7 @@ export class Parser<Input, Output> {
 
         if (result.done) {
             this.#buffer.splice(0, this.#state.cursor);
-            this.#program.hooks?.onReturn?.(result.value);
+            this.onReturn?.(result.value);
             this.#state = undefined;
             yield result.value;
         } else {
@@ -193,13 +163,14 @@ export class Parser<Input, Output> {
     }
 
     /**
-     * Parses the input using the parser program and yields the output.
+     * Processes the given input and produces the result.
      *
-     * @param {Iterable<Input> | null} input - The input sequence to parse.
-     * @param {ParserParseOptions} [options] - Optional parsing options.
-     * @returns {Iterable<Output>} - An iterable sequence of parsed outputs.
+     * @param {Iterable<Input> | null} input - The input to be processed.
+     * @param {ParserParseOptions} [options] - The options for parsing.
+     * @generator
+     * @returns {Iterable<Output>} The processed output.
      */
-    * parse(input: Iterable<Input> | null, options?: ParserParseOptions): Iterable<Output> {
+    * process(input: Iterable<Input> | null, options?: ParserParseOptions): Iterable<Output> {
         if (input !== null) for (const item of input) {
             this.#buffer.push(item);
 
@@ -215,39 +186,54 @@ export class Parser<Input, Output> {
     }
 
     /**
-     * A static generator function that returns the next input item without consuming it.
+     * Internal command execution for peek or consume operations.
      *
-     * @param {(input: Input) => void} [test] - An optional test function to validate the input.
-     * @returns {ParserGenerator<Input, Input>} - The generator yielding the peeked input item.
-     * @throws {EndOfInput} If end of input is reached unexpectedly.
+     * @generator
+     * @param {Peek | Consume} command - The command to execute.
+     * @param {Function} [constructor] - The error constructor for stack tracing.
+     * @returns {ParserGenerator<Input, Input>}
+     * @throws {EndOfInputError} If the end of input is reached unexpectedly.
      */
-    static* peek<Input>(test?: (input: Input) => void): ParserGenerator<Input, Input> {
-        const result = (yield peek) as Exclude<ParserResponse<Input>, ParserSnapshot>;
-        assert(result !== endOfInput, this.peek, () => new EndOfInput());
-        test?.(result);
-        return result;
+    // deno-lint-ignore ban-types
+    * #command(command: Peek | Consume, constructor?: Function): ParserGenerator<Input, Input> {
+        const item = (yield command) as Exclude<ParserResponse<Input>, ParserSnapshot>;
+
+        if (item === endOfInput) {
+            const error = new EndOfInputError();
+            Error.captureStackTrace(error, constructor);
+            throw error;
+        }
+
+        return item;
     }
 
     /**
-     * A static generator function that returns the next input item and consumes it.
+     * Requests to peek the next item from input without consuming it.
      *
-     * @param {(input: Input) => void} [test] - An optional test function to validate the input.
-     * @returns {ParserGenerator<Input, Input>} - The generator yielding the consumed input item.
-     * @throws {EndOfInput} If end of input is reached unexpectedly.
+     * @generator
+     * @returns {ParserGenerator<Input, Input>}
      */
-    static* consume<Input>(test?: (input: Input) => void): ParserGenerator<Input, Input> {
-        test?.(yield* Parser.peek());
-        const result = (yield consume) as Exclude<ParserResponse<Input>, ParserSnapshot>;
-        assert(result !== endOfInput, this.consume, () => new EndOfInput());
-        return result;
+    * peek(): ParserGenerator<Input, Input> {
+        return yield* this.#command(peek, this.peek);
     }
 
     /**
-     * A static generator function that returns a snapshot of the current parser state.
+     * Requests to consume the next item from input.
      *
-     * @returns {ParserGenerator<Input, ParserSnapshot>} - The generator yielding a parser snapshot.
+     * @generator
+     * @returns {ParserGenerator<Input, Input>}
      */
-    static* snapshot<Input>(): ParserGenerator<Input, ParserSnapshot> {
+    * consume(): ParserGenerator<Input, Input> {
+        return yield* this.#command(consume, this.consume);
+    }
+
+    /**
+     * Requests to take a snapshot of the current parser state.
+     *
+     * @generator
+     * @returns {ParserGenerator<Input, ParserSnapshot>}
+     */
+    * snapshot<Input>(): ParserGenerator<Input, ParserSnapshot> {
         return (yield ParserSnapshot) as ParserSnapshot;
     }
 }
