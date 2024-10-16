@@ -1,6 +1,6 @@
 {
-    "lock": false,
     "name": "@anluin/parsable",
-    "version": "0.1.2",
-    "exports": "./src/mod.ts"
+    "version": "0.1.3",
+    "exports": "./src/mod.ts",
+    "lock": false
 }
